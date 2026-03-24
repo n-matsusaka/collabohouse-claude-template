@@ -16,7 +16,57 @@
 var SPREADSHEET_ID = '1hSeqXhnlxXebNGE8IArGy48V89X1UIcvLIysQwDgSCk';
 var RESPONSE_SHEET_NAME = 'Form Responses 2';
 var MASTER_SHEET_NAME = '顧客マスタ統合シート';
+var EDIT_SHEET_NAME = '編集データシート';
 var SHARED_DRIVE_FOLDER_ID = '1GTVeABzQ9WZNdIVjqYQ8zUne4frZLDOC';
+
+// 編集データシートのヘッダー（データテーブル定義書T2に準拠・32列）
+var EDIT_HEADERS = [
+  // 紐付けキー
+  'SystemID',              // 1: KEY。顧客マスタとのRef
+  '元データ種別',          // 2: ANDPAD既存 / アンケート新規
+
+  // 分類B: 双方向同期
+  '担当設計士',            // 3
+  '次回来場予定日',        // 4
+
+  // 分類C: AppSheet専用
+  '完了フラグ',            // 5
+  '予算（万円）',          // 6
+  '土地有無',              // 7: あり/なし/検討中
+  '競合',                  // 8
+  '親承諾',                // 9: 問題なし/懸念あり
+  '親承諾メモ',            // 10
+  '希望入居時期',          // 11: YYYY-MM形式
+
+  // 設計士メモ5件
+  '設計士メモ1',           // 12
+  '設計士メモ1_記入者',    // 13
+  '設計士メモ1_記入日',    // 14
+  '設計士メモ2',           // 15
+  '設計士メモ2_記入者',    // 16
+  '設計士メモ2_記入日',    // 17
+  '設計士メモ3',           // 18
+  '設計士メモ3_記入者',    // 19
+  '設計士メモ3_記入日',    // 20
+  '設計士メモ4',           // 21
+  '設計士メモ4_記入者',    // 22
+  '設計士メモ4_記入日',    // 23
+  '設計士メモ5',           // 24
+  '設計士メモ5_記入者',    // 25
+  '設計士メモ5_記入日',    // 26
+
+  // クロススタジオ管理（D13）
+  '閲覧許可スタジオ',      // 27: EnumList。管理者・エリアマネジャーのみ編集可
+
+  // ANDPAD連携管理
+  'ANDPAD連携済',          // 28
+  '連携ステータス',        // 29: 未連携/連携済/エラー/要修正
+  '連携エラー',            // 30
+
+  // 内部管理
+  '最終更新者',            // 31
+  '最終更新日時'           // 32
+];
 
 // 新カラム構成ヘッダー（データテーブル定義書に準拠）
 var HEADERS = [
@@ -461,14 +511,18 @@ function convertXlsxToSheet_(file) {
 
 
 // =============================================================
-//  連携ステータス更新
+//  連携ステータス更新（編集データシートベース）
 // =============================================================
+/**
+ * archiveフォルダに今日のファイルがあれば、
+ * 編集データシートの「連携待ち」→「連携済」に更新する。
+ */
 function updateLinkageStatus() {
-  var sheet = getResponseSheet_();
-  var lastRow = sheet.getLastRow();
+  var editSheet = getEditSheet_();
+  var lastRow = editSheet.getLastRow();
   if (lastRow <= 1) return;
 
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var headers = editSheet.getRange(1, 1, 1, editSheet.getLastColumn()).getValues()[0];
   var colStatus = headers.indexOf('連携ステータス') + 1;
   var colLinked = headers.indexOf('ANDPAD連携済') + 1;
 
@@ -530,21 +584,17 @@ function updateLinkageStatus() {
     return;
   }
 
-  // 連携ステータスが「未連携」で完了フラグONの行を「連携済」に更新
-  var colComplete = headers.indexOf('完了フラグ') + 1;
-  var allData = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  // 「連携待ち」の行を「連携済」に更新
+  var allData = editSheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
   var updated = 0;
 
   for (var i = 0; i < allData.length; i++) {
     var status = allData[i][colStatus - 1];
-    var linked = allData[i][colLinked - 1];
-    var complete = allData[i][colComplete - 1];
 
-    // 完了フラグONで、未連携で、ANDPAD連携済でないもの
-    if (complete === true && status === '未連携' && linked !== true) {
+    if (status === '連携待ち') {
       var rowNum = i + 2;
-      sheet.getRange(rowNum, colLinked).setValue(true);
-      sheet.getRange(rowNum, colStatus).setValue('連携済');
+      editSheet.getRange(rowNum, colLinked).setValue(true);
+      editSheet.getRange(rowNum, colStatus).setValue('連携済');
       updated++;
     }
   }
@@ -554,21 +604,148 @@ function updateLinkageStatus() {
 
 
 // =============================================================
-//  ユーザーマスタに「追加閲覧スタジオ」カラムを追加
+//  編集データシート初期化（T2: 32列）
 // =============================================================
-function addCrossStudioColumn() {
+function initializeEditSheet() {
   var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  var sheet = ss.getSheetByName('ユーザーマスタ');
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var sheet = ss.getSheetByName(EDIT_SHEET_NAME);
 
-  if (headers.indexOf('追加閲覧スタジオ') >= 0) {
-    Logger.log('「追加閲覧スタジオ」カラムは既に存在します');
+  // シートが無ければ新規作成
+  if (!sheet) {
+    sheet = ss.insertSheet(EDIT_SHEET_NAME);
+    Logger.log('「' + EDIT_SHEET_NAME + '」シートを新規作成しました');
+  } else {
+    // 既存データがある場合はヘッダー行だけ上書き（データは残す）
+    Logger.log('「' + EDIT_SHEET_NAME + '」シートは既に存在します。ヘッダーを更新します');
+  }
+
+  // ヘッダー書き込み
+  sheet.getRange(1, 1, 1, EDIT_HEADERS.length).setValues([EDIT_HEADERS]);
+  sheet.setFrozenRows(1);
+
+  Logger.log('✅ 編集データシート初期化完了: ' + EDIT_HEADERS.length + '列');
+}
+
+
+// =============================================================
+//  編集データシート取得ヘルパー
+// =============================================================
+function getEditSheet_() {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName(EDIT_SHEET_NAME);
+  if (!sheet) {
+    throw new Error('編集データシートが存在しません。initializeEditSheet()を先に実行してください。');
+  }
+  return sheet;
+}
+
+
+// =============================================================
+//  アンケート → 編集データシート転記（日次バッチ 07:30）
+// =============================================================
+/**
+ * Form Responses 2 の未転記行を編集データシートに転記する。
+ * - 既存顧客（ANDPADシステムID有り）→ 元データ種別「ANDPAD既存」
+ * - 新規顧客（ANDPADシステムID無し）→ 元データ種別「アンケート新規」
+ * - 転記済みの行は「仮行フラグ」を「転記済」にマークしてスキップ
+ */
+function transferAnketeToEditSheet() {
+  var responseSheet = getResponseSheet_();
+  var editSheet = getEditSheet_();
+
+  var responseLastRow = responseSheet.getLastRow();
+  if (responseLastRow <= 1) {
+    Logger.log('アンケートデータがありません。スキップ。');
     return;
   }
 
-  var newCol = headers.length + 1;
-  sheet.getRange(1, newCol).setValue('追加閲覧スタジオ');
-  Logger.log('✅ ユーザーマスタに「追加閲覧スタジオ」カラムを追加しました（列' + newCol + '）');
+  // Form Responses 2 のデータ読み込み
+  var responseHeaders = responseSheet.getRange(1, 1, 1, responseSheet.getLastColumn()).getValues()[0];
+  var responseData = responseSheet.getRange(2, 1, responseLastRow - 1, responseHeaders.length).getValues();
+
+  // カラムインデックス（Form Responses 2）
+  var rCol = {};
+  responseHeaders.forEach(function(h, i) { rCol[h] = i; });
+
+  // 編集データシートのヘッダーとカラムマップ
+  var editHeaders = editSheet.getRange(1, 1, 1, editSheet.getLastColumn()).getValues()[0];
+  var eCol = {};
+  editHeaders.forEach(function(h, i) { eCol[h] = i; });
+
+  // 編集データシートの既存SystemID一覧（重複防止）
+  var existingIds = {};
+  var editLastRow = editSheet.getLastRow();
+  if (editLastRow > 1) {
+    var editSystemIds = editSheet.getRange(2, eCol['SystemID'] + 1, editLastRow - 1, 1).getValues();
+    editSystemIds.forEach(function(row) {
+      if (row[0]) existingIds[String(row[0])] = true;
+    });
+  }
+
+  // 転記対象の行を収集
+  var newRows = [];
+  var transferredResponseRows = []; // 転記済みマークする行番号
+
+  for (var i = 0; i < responseData.length; i++) {
+    // 既に転記済みの行はスキップ
+    var flag = responseData[i][rCol['仮行フラグ']];
+    if (flag === '転記済') continue;
+
+    // Timestampが無い行はスキップ（空行対策）
+    if (!responseData[i][rCol['Timestamp']]) continue;
+
+    var systemId = String(responseData[i][rCol['ANDPADシステムID']] || '');
+    var isExisting = responseData[i][rCol['既存顧客フラグ']];
+
+    // 新規顧客の場合、一意キーとしてTimestamp+氏名をIDに使う
+    var editKey = systemId;
+    if (!editKey) {
+      // 新規顧客用の仮SystemID（後でANDPADインポート時に正式ID付与）
+      editKey = 'NEW_' + Utilities.formatDate(
+        new Date(responseData[i][rCol['Timestamp']]),
+        'Asia/Tokyo',
+        'yyyyMMddHHmmss'
+      );
+    }
+
+    // 既に編集データシートに存在する場合はスキップ
+    if (existingIds[editKey]) continue;
+
+    // 編集データシートの新しい行を構築
+    var newRow = new Array(editHeaders.length).fill('');
+
+    newRow[eCol['SystemID']] = editKey;
+    newRow[eCol['元データ種別']] = (isExisting === true || isExisting === 'TRUE') ? 'ANDPAD既存' : 'アンケート新規';
+
+    // 連携ステータス初期値
+    newRow[eCol['ANDPAD連携済']] = false;
+    newRow[eCol['連携ステータス']] = '未連携';
+
+    // 最終更新
+    newRow[eCol['最終更新日時']] = new Date();
+    newRow[eCol['最終更新者']] = 'system@batch';
+
+    newRows.push(newRow);
+    existingIds[editKey] = true;
+    transferredResponseRows.push(i + 2); // シートの行番号（1始まり + ヘッダー行）
+  }
+
+  if (newRows.length === 0) {
+    Logger.log('転記対象のアンケートデータはありません。');
+    return;
+  }
+
+  // 編集データシートに一括書き込み
+  var writeStart = editSheet.getLastRow() + 1;
+  editSheet.getRange(writeStart, 1, newRows.length, editHeaders.length).setValues(newRows);
+
+  // Form Responses 2 の転記済みマーク
+  var flagCol = rCol['仮行フラグ'] + 1;
+  transferredResponseRows.forEach(function(rowNum) {
+    responseSheet.getRange(rowNum, flagCol).setValue('転記済');
+  });
+
+  Logger.log('✅ アンケート→編集データシート転記完了: ' + newRows.length + '件');
 }
 
 
@@ -601,5 +778,13 @@ function setupAllTriggers() {
     .everyDays(1)
     .create();
 
-  Logger.log('✅ トリガー3件を登録しました');
+  // 毎日7:30 — アンケート→編集データシート転記
+  ScriptApp.newTrigger('transferAnketeToEditSheet')
+    .timeBased()
+    .atHour(7)
+    .nearMinute(30)
+    .everyDays(1)
+    .create();
+
+  Logger.log('✅ トリガー4件を登録しました');
 }

@@ -307,46 +307,122 @@ function mapRowToAndpad_(row, hm) {
 
 /**
  * ANDPADインポート用xlsxを生成してGoogle Driveに保存
+ *
+ * データソース（v3.1）:
+ *   - 編集データシート: 連携ステータス=未連携 の行が対象
+ *   - アンケート新規 → Form Responses 2 から顧客情報（A分類）を取得
+ *   - ANDPAD既存 → 顧客マスタ統合シートから参照 + B分類の変更のみ送信
  */
 function exportToAndpadXlsx() {
-  var sheet = getResponseSheet_();
-  var lastRow = sheet.getLastRow();
-  var lastCol = sheet.getLastColumn();
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var editSheet = ss.getSheetByName(EDIT_SHEET_NAME);
 
-  if (lastRow <= 1) {
-    Logger.log('データがありません');
+  if (!editSheet || editSheet.getLastRow() <= 1) {
+    Logger.log('編集データシートにデータがありません');
     return;
   }
 
-  var allData = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-  var headers = allData[0];
+  // 編集データシート読み込み
+  var editData = editSheet.getDataRange().getValues();
+  var editHeaders = editData[0];
+  var eCol = {};
+  editHeaders.forEach(function(h, i) { eCol[h] = i; });
 
-  // ヘッダー名→列インデックスのマップ
-  var hm = {};
-  headers.forEach(function(name, i) { hm[name] = i; });
+  // Form Responses 2（アンケート新規用）のデータをSystemIDでインデックス化
+  var responseSheet = ss.getSheetByName(RESPONSE_SHEET_NAME);
+  var responseMap = {}; // SystemID → { row, headerMap }
+  if (responseSheet && responseSheet.getLastRow() > 1) {
+    var rData = responseSheet.getDataRange().getValues();
+    var rHeaders = rData[0];
+    var rCol = {};
+    rHeaders.forEach(function(h, i) { rCol[h] = i; });
 
-  // 抽出条件: 完了フラグ=TRUE AND ANDPAD連携済≠TRUE AND お名前あり
-  var colComplete = hm['完了フラグ'];
-  var colLinked = hm['ANDPAD連携済'];
-  var colName = hm['お名前（漢字）'];
+    for (var r = 1; r < rData.length; r++) {
+      // NEW_で始まるキーはTimestampベースで生成したもの
+      var ts = rData[r][rCol['Timestamp']];
+      if (!ts) continue;
+      var key = 'NEW_' + Utilities.formatDate(
+        new Date(ts), 'Asia/Tokyo', 'yyyyMMddHHmmss'
+      );
+      responseMap[key] = { row: rData[r], hm: rCol };
+
+      // ANDPADシステムIDがある場合もマップ
+      var sysId = String(rData[r][rCol['ANDPADシステムID']] || '');
+      if (sysId) responseMap[sysId] = { row: rData[r], hm: rCol };
+    }
+  }
+
+  // 顧客マスタ統合シート（ANDPAD既存用）をSystemIDでインデックス化
+  var masterSheet = ss.getSheetByName(MASTER_SHEET_NAME);
+  var masterMap = {}; // SystemID → row data
+  var masterHeaders = [];
+  var mCol = {};
+  if (masterSheet && masterSheet.getLastRow() > 1) {
+    var mData = masterSheet.getDataRange().getValues();
+    masterHeaders = mData[0];
+    masterHeaders.forEach(function(h, i) { mCol[h] = i; });
+    for (var m = 1; m < mData.length; m++) {
+      var mSysId = String(mData[m][mCol['システムID']] || '');
+      if (mSysId) masterMap[mSysId] = mData[m];
+    }
+  }
+
+  // ANDPAD出力ヘッダーのインデックス
+  var ah = {};
+  ANDPAD_HEADERS.forEach(function(name, i) { ah[name] = i; });
 
   var andpadRows = [];
+  var exportedEditRows = []; // 連携ステータスを更新する行番号
 
-  for (var i = 1; i < allData.length; i++) {
-    var row = allData[i];
+  for (var i = 1; i < editData.length; i++) {
+    var editRow = editData[i];
 
-    // 完了フラグがTRUEでないものはスキップ
-    var complete = colComplete !== undefined ? row[colComplete] : false;
-    if (complete !== true && complete !== 'TRUE') continue;
+    // 連携ステータスが「未連携」でないものはスキップ
+    var status = editRow[eCol['連携ステータス']];
+    if (status !== '未連携') continue;
 
-    // ANDPAD連携済はスキップ
-    var linked = colLinked !== undefined ? row[colLinked] : false;
-    if (linked === true || linked === 'TRUE') continue;
+    var systemId = String(editRow[eCol['SystemID']] || '');
+    var dataType = editRow[eCol['元データ種別']];
+    if (!systemId) continue;
 
-    // 名前がないものはスキップ
-    if (colName !== undefined && !row[colName]) continue;
+    var out = new Array(ANDPAD_HEADERS.length).fill('');
 
-    andpadRows.push(mapRowToAndpad_(row, hm));
+    if (dataType === 'アンケート新規') {
+      // アンケート新規: Form Responses 2 のデータでフルマッピング
+      var responseEntry = responseMap[systemId];
+      if (!responseEntry) {
+        Logger.log('⚠ アンケートデータが見つかりません: ' + systemId);
+        continue;
+      }
+      out = mapRowToAndpad_(responseEntry.row, responseEntry.hm);
+
+    } else if (dataType === 'ANDPAD既存') {
+      // ANDPAD既存: 顧客マスタの全データをベースにコピー → 変更分だけ上書き
+      // これにより、既存データが空白で上書きされるのを防ぐ
+      var masterRow = masterMap[systemId];
+      if (!masterRow) {
+        Logger.log('⚠ 顧客マスタにデータが見つかりません: ' + systemId);
+        continue;
+      }
+
+      // 顧客マスタのヘッダーとANDPADヘッダーを突き合わせて全列コピー
+      for (var c = 0; c < ANDPAD_HEADERS.length; c++) {
+        var andpadCol = ANDPAD_HEADERS[c];
+        if (mCol[andpadCol] !== undefined) {
+          out[c] = masterRow[mCol[andpadCol]];
+        }
+      }
+    }
+
+    // 編集データシートのB分類で上書き（両タイプ共通）
+    var designer = editRow[eCol['担当設計士']];
+    if (designer) out[ah['役割:設計']] = designer;
+
+    var nextVisit = editRow[eCol['次回来場予定日']];
+    if (nextVisit) out[ah['次回アポ日(予定)']] = formatDate_(nextVisit);
+
+    andpadRows.push(out);
+    exportedEditRows.push(i + 1); // シート行番号（1始まり）
   }
 
   if (andpadRows.length === 0) {
@@ -382,7 +458,6 @@ function exportToAndpadXlsx() {
     }
   }
 
-  // インポートフォルダが見つからない場合はスプレッドシートと同じ場所に保存
   if (!importFolder) {
     var ssFile = DriveApp.getFileById(SPREADSHEET_ID);
     var folders = ssFile.getParents();
@@ -395,6 +470,12 @@ function exportToAndpadXlsx() {
 
   // 一時スプレッドシートを削除
   DriveApp.getFileById(tempSs.getId()).setTrashed(true);
+
+  // 編集データシートの連携ステータスを「連携待ち」に更新
+  var statusCol = eCol['連携ステータス'] + 1;
+  exportedEditRows.forEach(function(rowNum) {
+    editSheet.getRange(rowNum, statusCol).setValue('連携待ち');
+  });
 
   Logger.log('✅ エクスポート完了: ' + andpadRows.length + '件');
   Logger.log('📁 ファイル: ' + savedFile.getUrl());
