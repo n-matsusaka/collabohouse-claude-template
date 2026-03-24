@@ -730,22 +730,107 @@ function transferAnketeToEditSheet() {
     transferredResponseRows.push(i + 2); // シートの行番号（1始まり + ヘッダー行）
   }
 
-  if (newRows.length === 0) {
+  if (newRows.length > 0) {
+    // 編集データシートに一括書き込み
+    var writeStart = editSheet.getLastRow() + 1;
+    editSheet.getRange(writeStart, 1, newRows.length, editHeaders.length).setValues(newRows);
+
+    // Form Responses 2 の転記済みマーク
+    var flagCol = rCol['仮行フラグ'] + 1;
+    transferredResponseRows.forEach(function(rowNum) {
+      responseSheet.getRange(rowNum, flagCol).setValue('転記済');
+    });
+
+    Logger.log('✅ アンケート→編集データシート転記完了: ' + newRows.length + '件');
+  } else {
     Logger.log('転記対象のアンケートデータはありません。');
+  }
+
+  // 顧客マスタとの同期（マスタにあって編集データシートに無い顧客の空行生成）
+  syncEditSheetFromMaster_();
+}
+
+
+// =============================================================
+//  顧客マスタ → 編集データシート空行生成（内部関数）
+// =============================================================
+/**
+ * 顧客マスタ統合シートに存在するが編集データシートに無い顧客の空行を生成する。
+ * 初回実行時は全顧客分（約5,000行）、以降は新規分のみ追加。
+ */
+function syncEditSheetFromMaster_() {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var masterSheet = ss.getSheetByName(MASTER_SHEET_NAME);
+  var editSheet = ss.getSheetByName(EDIT_SHEET_NAME);
+
+  if (!masterSheet || masterSheet.getLastRow() <= 1) {
+    Logger.log('顧客マスタにデータがありません。スキップ。');
     return;
   }
 
-  // 編集データシートに一括書き込み
+  // 顧客マスタのシステムIDを取得
+  var masterHeaders = masterSheet.getRange(1, 1, 1, masterSheet.getLastColumn()).getValues()[0];
+  var mSysIdIdx = masterHeaders.indexOf('システムID');
+  if (mSysIdIdx < 0) {
+    Logger.log('顧客マスタに「システムID」カラムがありません。');
+    return;
+  }
+  var masterIds = masterSheet.getRange(2, mSysIdIdx + 1, masterSheet.getLastRow() - 1, 1).getValues();
+
+  // 編集データシートの既存SystemID一覧
+  var editHeaders = editSheet.getRange(1, 1, 1, editSheet.getLastColumn()).getValues()[0];
+  var eCol = {};
+  editHeaders.forEach(function(h, i) { eCol[h] = i; });
+
+  var existingIds = {};
+  var editLastRow = editSheet.getLastRow();
+  if (editLastRow > 1) {
+    var editSystemIds = editSheet.getRange(2, eCol['SystemID'] + 1, editLastRow - 1, 1).getValues();
+    editSystemIds.forEach(function(row) {
+      if (row[0]) existingIds[String(row[0])] = true;
+    });
+  }
+
+  // マスタにあって編集データシートに無い顧客の空行を生成
+  var newRows = [];
+  for (var i = 0; i < masterIds.length; i++) {
+    var sysId = String(masterIds[i][0] || '');
+    if (!sysId || existingIds[sysId]) continue;
+
+    var newRow = new Array(editHeaders.length).fill('');
+    newRow[eCol['SystemID']] = sysId;
+    newRow[eCol['元データ種別']] = 'ANDPAD既存';
+    newRow[eCol['ANDPAD連携済']] = true;
+    newRow[eCol['連携ステータス']] = '連携済';
+    newRow[eCol['最終更新日時']] = new Date();
+    newRow[eCol['最終更新者']] = 'system@sync';
+
+    newRows.push(newRow);
+    existingIds[sysId] = true;
+  }
+
+  if (newRows.length === 0) {
+    Logger.log('顧客マスタとの同期: 新規追加なし');
+    return;
+  }
+
+  // 一括書き込み
   var writeStart = editSheet.getLastRow() + 1;
   editSheet.getRange(writeStart, 1, newRows.length, editHeaders.length).setValues(newRows);
 
-  // Form Responses 2 の転記済みマーク
-  var flagCol = rCol['仮行フラグ'] + 1;
-  transferredResponseRows.forEach(function(rowNum) {
-    responseSheet.getRange(rowNum, flagCol).setValue('転記済');
-  });
+  Logger.log('✅ 顧客マスタ→編集データシート同期完了: ' + newRows.length + '件追加');
+}
 
-  Logger.log('✅ アンケート→編集データシート転記完了: ' + newRows.length + '件');
+
+// =============================================================
+//  初回一括生成（手動実行用）
+// =============================================================
+/**
+ * 顧客マスタの全顧客に対して編集データシートの空行を一括生成する。
+ * 初回セットアップ時に1回だけ手動実行する。
+ */
+function bulkCreateEditRecords() {
+  syncEditSheetFromMaster_();
 }
 
 
