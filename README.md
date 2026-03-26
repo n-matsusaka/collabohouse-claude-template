@@ -13,7 +13,8 @@ git clone https://github.com/n-matsusaka/claude-template.git $HOME\_template
 
 ### 2. スキルを配置
 ```powershell
-Copy-Item -Recurse $HOME\_template\skills\new-project $HOME\.claude\skills\new-project
+New-Item -ItemType Directory -Force -Path $HOME\.claude\skills\new-project
+Copy-Item $HOME\_template\skills\new-project\SKILL.md $HOME\.claude\skills\new-project\
 ```
 
 ### 3. プロジェクト用フォルダを作成
