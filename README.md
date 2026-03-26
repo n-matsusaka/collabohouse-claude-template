@@ -6,7 +6,7 @@
 
 ### 1. このリポジトリをクローン
 ```bash
-git clone https://github.com/xxx/claude-project-template.git ~/\_template
+git clone https://github.com/n-matsusaka/claude-template.git ~/_template
 ```
 
 ### 2. スキルを配置
