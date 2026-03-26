@@ -18,7 +18,7 @@ Copy-Item -Recurse $HOME\_template\skills\new-project $HOME\.claude\skills\new-p
 
 ### 3. プロジェクト用フォルダを作成
 ```powershell
-mkdir $HOME\projects
+New-Item -ItemType Directory -Force -Path $HOME\projects
 ```
 
 これで準備完了です。
