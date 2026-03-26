@@ -4,19 +4,21 @@
 
 ## セットアップ（初回のみ）
 
+VS Codeのターミナル（PowerShell）で、以下を順に実行してください。
+
 ### 1. このリポジトリをクローン
-```bash
-git clone https://github.com/n-matsusaka/claude-template.git ~/_template
+```powershell
+git clone https://github.com/n-matsusaka/claude-template.git $HOME\_template
 ```
 
 ### 2. スキルを配置
-```bash
-cp -r ~/_template/skills/new-project ~/.claude/skills/new-project
+```powershell
+Copy-Item -Recurse $HOME\_template\skills\new-project $HOME\.claude\skills\new-project
 ```
 
 ### 3. プロジェクト用フォルダを作成
-```bash
-mkdir -p ~/projects
+```powershell
+mkdir $HOME\projects
 ```
 
 これで準備完了です。
