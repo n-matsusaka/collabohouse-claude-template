@@ -7,6 +7,23 @@
       "Bash(npm:*)",
       "Bash(npx:*)",
       "Bash(clasp:*)"
+    ],
+    "deny": [
+      "Read(~/.ssh/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.azure/**)",
+      "Read(~/.npmrc)",
+      "Read(~/.git-credentials)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.clasprc.json)",
+      "Read(./secrets/**)",
+      "Edit(~/.bashrc)",
+      "Edit(~/.zshrc)",
+      "Edit(~/.profile)",
+      "Bash(wget *)",
+      "Bash(nc *)",
+      "Bash(ssh *)"
     ]
   },
   "hooks": {
