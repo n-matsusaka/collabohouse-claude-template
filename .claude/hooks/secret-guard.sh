@@ -22,6 +22,10 @@ PATTERNS=(
   'sk-[A-Za-z0-9]{20,}'
   'ghp_[A-Za-z0-9]{36}'
   'xoxb-[0-9]{10,}'
+  'GOCSPX-[A-Za-z0-9_-]{20,}'
+  '1//[A-Za-z0-9_-]{40,}'
+  'ya29\.[A-Za-z0-9_-]{50,}'
+  'sk-ant-[A-Za-z0-9_-]{20,}'
 )
 
 for p in "${PATTERNS[@]}"; do

@@ -13,3 +13,9 @@
 - `rm -rf` / `git push --force` 禁止
 - 仕様書・ドキュメント等の成果物は `docs/output/` に保存する
 - ユーザーからの提供資料は `docs/input/` に整理する
+
+## セキュリティ
+- APIキー・トークンはコードにハードコードしない（グローバルCLAUDE.mdの管理ルールに従う）
+- `.env` に保存し `.gitignore` で除外されていることを確認済み
+- GASの場合は `PropertiesService.getScriptProperties()` を使う
+- APIキーはこのプロジェクト専用に発行されたものを使う（使い回し禁止）
