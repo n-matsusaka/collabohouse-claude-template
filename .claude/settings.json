@@ -73,6 +73,24 @@
             "command": "bash .claude/hooks/verify-xlsx.sh"
           }
         ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/verify-design-docs.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/verify-design-docs.sh"
+          }
+        ]
       }
     ]
   }
